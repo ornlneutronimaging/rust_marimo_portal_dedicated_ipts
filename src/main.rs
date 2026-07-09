@@ -1,11 +1,26 @@
 use eframe::egui;
 use std::ffi::CString;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
 const TOP_DIR: &str = "/SNS/VENUS";
+
+/// Recursively set rwx-for-all on a path and everything inside it.
+/// Entries owned by other users cannot be chmod'ed and are left as-is.
+fn open_permissions_recursive(path: &Path) {
+    let open_perms = fs::Permissions::from_mode(0o777);
+    let _ = fs::set_permissions(path, open_perms);
+    if path.is_dir() {
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                open_permissions_recursive(&entry.path());
+            }
+        }
+    }
+}
 
 /// Check if the current user has read+execute access to a directory
 /// using the POSIX access() syscall, which respects groups and ACLs.
@@ -150,6 +165,12 @@ impl eframe::App for MyApp {
                                         .join("shared")
                                         .join("notebooks")
                                         .join(&self.py_files[py_idx]);
+                                    // Make sure the notebooks folder and everything inside it
+                                    // is read/write/exec by everybody, whether it was just
+                                    // created or already there.
+                                    if let Some(notebooks_dir) = py_file.parent() {
+                                        open_permissions_recursive(notebooks_dir);
+                                    }
                                     let marimo_bin = "/SNS/VENUS/shared/software/git/marimo_notebooks/.pixi/envs/jupyter/bin/marimo";
                                     println!("Launching: {} run {}", marimo_bin, py_file.display());
                                     let _ = Command::new(marimo_bin)

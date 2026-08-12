@@ -1,3 +1,5 @@
+mod theme;
+
 use eframe::egui;
 use std::ffi::CString;
 use std::fs;
@@ -39,8 +41,41 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Marimo Application Launcher",
         options,
-        Box::new(|_cc| Ok(Box::new(MyApp::new()))),
+        Box::new(|cc| {
+            cc.egui_ctx.set_theme(theme::load());
+            // Type ramp and spacing are the same in both modes.
+            cc.egui_ctx.all_styles_mut(|style| {
+                style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(16.0));
+                style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(16.0));
+                style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(20.0));
+                style.spacing.item_spacing = egui::vec2(8.0, 12.0);
+                style.spacing.button_padding = egui::vec2(16.0, 8.0);
+            });
+            // In dark mode this portal paints on pure black, not egui's
+            // default dark gray.
+            let mut dark = egui::Visuals::dark();
+            dark.panel_fill = egui::Color32::BLACK;
+            dark.window_fill = egui::Color32::BLACK;
+            cc.egui_ctx.set_visuals_of(egui::Theme::Dark, dark);
+            Ok(Box::new(MyApp::new()))
+        }),
     )
+}
+
+/// Fill and border of the list / description boxes: near-black surfaces on the
+/// black dark background, white on the light gray light background.
+fn container_colors(visuals: &egui::Visuals) -> (egui::Color32, egui::Color32) {
+    if visuals.dark_mode {
+        (
+            egui::Color32::from_rgb(25, 25, 30),
+            egui::Color32::from_rgb(80, 80, 100),
+        )
+    } else {
+        (
+            egui::Color32::WHITE,
+            egui::Color32::from_rgb(190, 190, 205),
+        )
+    }
 }
 
 struct MyApp {
@@ -132,22 +167,15 @@ impl MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut visuals = egui::Visuals::dark();
-        visuals.panel_fill = egui::Color32::BLACK;
-        visuals.window_fill = egui::Color32::BLACK;
-        ctx.set_visuals(visuals);
-
-        let mut style = (*ctx.style()).clone();
-        style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(16.0));
-        style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(16.0));
-        style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(20.0));
-        style.spacing.item_spacing = egui::vec2(8.0, 12.0);
-        style.spacing.button_padding = egui::vec2(16.0, 8.0);
-        ctx.set_style(style);
+        // Theme and style are installed once at startup (see `main`).
 
         if self.selected_py.is_some() {
             egui::TopBottomPanel::bottom("bottom_panel")
-                .frame(egui::Frame::new().fill(egui::Color32::BLACK).inner_margin(12.0))
+                .frame(
+                    egui::Frame::new()
+                        .fill(ctx.style().visuals.panel_fill)
+                        .inner_margin(12.0),
+                )
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
                         let launching = self.launch_time
@@ -176,6 +204,11 @@ impl eframe::App for MyApp {
                                     let _ = Command::new(marimo_bin)
                                         .arg("run")
                                         .arg(&py_file)
+                                        // IPTS notebook folders have no
+                                        // pyproject.toml/.marimo.toml, so
+                                        // marimo would use its 8 MB default
+                                        // and truncate large cell outputs.
+                                        .env("MARIMO_OUTPUT_MAX_BYTES", "20000000")
                                         .spawn();
                                     self.launch_time = Some(Instant::now());
                                 }
@@ -186,6 +219,9 @@ impl eframe::App for MyApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                theme::toggle_button(ui);
+            });
             ui.add_space(10.0);
 
             let label_width = 80.0;
@@ -214,9 +250,10 @@ impl eframe::App for MyApp {
                 })
                 .collect();
 
+            let (container_fill, container_border) = container_colors(ui.visuals());
             egui::Frame::new()
-                .fill(egui::Color32::from_rgb(25, 25, 30))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 80, 100)))
+                .fill(container_fill)
+                .stroke(egui::Stroke::new(1.0, container_border))
                 .corner_radius(4.0)
                 .inner_margin(4.0)
                 .show(ui, |ui| {
@@ -246,7 +283,7 @@ impl eframe::App for MyApp {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     ui.add_space(label_width + 8.0);
-                    ui.colored_label(egui::Color32::from_rgb(180, 180, 100), "No application found");
+                    ui.colored_label(ui.visuals().warn_fg_color, "No application found");
                 });
             } else if !self.py_files.is_empty() {
                 let prev_selected_py = self.selected_py;
@@ -278,9 +315,10 @@ impl eframe::App for MyApp {
                     // Description box
                     if let Some(desc) = &self.description {
                         ui.add_space(5.0);
+                        let (container_fill, container_border) = container_colors(ui.visuals());
                         egui::Frame::new()
-                            .fill(egui::Color32::from_rgb(25, 25, 30))
-                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 80, 100)))
+                            .fill(container_fill)
+                            .stroke(egui::Stroke::new(1.0, container_border))
                             .corner_radius(6.0)
                             .inner_margin(12.0)
                             .show(ui, |ui| {

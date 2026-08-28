@@ -2542,6 +2542,7 @@ name = "rust_marimo_portal"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "egui",
  "libc",
 ]
 

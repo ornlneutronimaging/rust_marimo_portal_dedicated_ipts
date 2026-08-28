@@ -1,4 +1,5 @@
 mod theme;
+mod zoom;
 
 use eframe::egui;
 use std::ffi::CString;
@@ -43,6 +44,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_theme(theme::load());
+            cc.egui_ctx.set_zoom_factor(zoom::load());
             // Type ramp and spacing are the same in both modes.
             cc.egui_ctx.all_styles_mut(|style| {
                 style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(16.0));
@@ -86,6 +88,7 @@ struct MyApp {
     selected_py: Option<usize>,
     description: Option<String>,
     launch_time: Option<Instant>,
+    launch_error: Option<String>,
 }
 
 impl MyApp {
@@ -112,6 +115,7 @@ impl MyApp {
             selected_py: None,
             description: None,
             launch_time: None,
+            launch_error: None,
         }
     }
 
@@ -178,6 +182,9 @@ impl eframe::App for MyApp {
                 )
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
+                        if let Some(err) = &self.launch_error {
+                            ui.colored_label(ui.visuals().error_fg_color, err);
+                        }
                         let launching = self.launch_time
                             .map(|t| t.elapsed().as_secs() < 5)
                             .unwrap_or(false);
@@ -199,9 +206,9 @@ impl eframe::App for MyApp {
                                     if let Some(notebooks_dir) = py_file.parent() {
                                         open_permissions_recursive(notebooks_dir);
                                     }
-                                    let marimo_bin = "/SNS/VENUS/shared/software/git/marimo_notebooks/.pixi/envs/jupyter/bin/marimo";
+                                    let marimo_bin = "/SNS/VENUS/shared/software/git/marimo_notebooks/.pixi/envs/default/bin/marimo";
                                     println!("Launching: {} run {}", marimo_bin, py_file.display());
-                                    let _ = Command::new(marimo_bin)
+                                    match Command::new(marimo_bin)
                                         .arg("run")
                                         .arg(&py_file)
                                         // IPTS notebook folders have no
@@ -209,8 +216,20 @@ impl eframe::App for MyApp {
                                         // marimo would use its 8 MB default
                                         // and truncate large cell outputs.
                                         .env("MARIMO_OUTPUT_MAX_BYTES", "20000000")
-                                        .spawn();
-                                    self.launch_time = Some(Instant::now());
+                                        .spawn()
+                                    {
+                                        Ok(_) => {
+                                            self.launch_error = None;
+                                            self.launch_time = Some(Instant::now());
+                                        }
+                                        Err(e) => {
+                                            self.launch_error = Some(format!(
+                                                "Failed to launch {}: {}",
+                                                marimo_bin, e
+                                            ));
+                                            self.launch_time = None;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -221,6 +240,7 @@ impl eframe::App for MyApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 theme::toggle_button(ui);
+                zoom::toggle_button(ui);
             });
             ui.add_space(10.0);
 

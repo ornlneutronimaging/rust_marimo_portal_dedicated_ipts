@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 eframe = "0.31"
+egui = "0.31"
 libc = "0.2"

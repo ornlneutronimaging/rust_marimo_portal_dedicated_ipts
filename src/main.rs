@@ -238,116 +238,121 @@ impl eframe::App for MyApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                theme::toggle_button(ui);
-                zoom::toggle_button(ui);
-            });
-            ui.add_space(10.0);
-
-            let label_width = 80.0;
-            let field_width = ui.available_width() - label_width - 20.0;
-
-            // IPTS search filter
-            ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(label_width, ui.spacing().interact_size.y),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| { ui.strong("Search"); },
-                );
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.filter_text)
-                        .desired_width(field_width)
-                        .hint_text("Type to filter IPTS folders..."),
-                );
-            });
-
-            // Always-visible IPTS list
-            let prev_selected = self.selected;
-            let filtered: Vec<(usize, &String)> = self.folders.iter().enumerate()
-                .filter(|(_, name)| {
-                    self.filter_text.is_empty()
-                        || name.to_lowercase().contains(&self.filter_text.to_lowercase())
-                })
-                .collect();
-
-            let (container_fill, container_border) = container_colors(ui.visuals());
-            egui::Frame::new()
-                .fill(container_fill)
-                .stroke(egui::Stroke::new(1.0, container_border))
-                .corner_radius(4.0)
-                .inner_margin(4.0)
+            egui::ScrollArea::vertical()
+                .id_salt("marimo_dedicated_main_scroll")
+                .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .min_scrolled_height(350.0)
-                        .max_height(350.0)
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        theme::toggle_button(ui);
+                        zoom::toggle_button(ui);
+                    });
+                    ui.add_space(10.0);
+
+                    let label_width = 80.0;
+                    let field_width = ui.available_width() - label_width - 20.0;
+
+                    // IPTS search filter
+                    ui.horizontal(|ui| {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(label_width, ui.spacing().interact_size.y),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| { ui.strong("Search"); },
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.filter_text)
+                                .desired_width(field_width)
+                                .hint_text("Type to filter IPTS folders..."),
+                        );
+                    });
+
+                    // Always-visible IPTS list
+                    let prev_selected = self.selected;
+                    let filtered: Vec<(usize, &String)> = self.folders.iter().enumerate()
+                        .filter(|(_, name)| {
+                            self.filter_text.is_empty()
+                                || name.to_lowercase().contains(&self.filter_text.to_lowercase())
+                        })
+                        .collect();
+
+                    let (container_fill, container_border) = container_colors(ui.visuals());
+                    egui::Frame::new()
+                        .fill(container_fill)
+                        .stroke(egui::Stroke::new(1.0, container_border))
+                        .corner_radius(4.0)
+                        .inner_margin(4.0)
                         .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            for (i, folder) in &filtered {
-                                if ui.selectable_label(
-                                    self.selected == Some(*i),
-                                    *folder,
-                                ).clicked() {
-                                    self.selected = Some(*i);
-                                }
-                            }
+                            egui::ScrollArea::vertical()
+                                .min_scrolled_height(350.0)
+                                .max_height(350.0)
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    for (i, folder) in &filtered {
+                                        if ui.selectable_label(
+                                            self.selected == Some(*i),
+                                            *folder,
+                                        ).clicked() {
+                                            self.selected = Some(*i);
+                                        }
+                                    }
+                                });
                         });
-                });
 
-            if self.selected != prev_selected {
-                self.refresh_py_files();
-                self.description = None;
-            }
-
-            // Notebook selector or "no application" message
-            if self.selected.is_some() && self.py_files.is_empty() {
-                ui.add_space(5.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(label_width + 8.0);
-                    ui.colored_label(ui.visuals().warn_fg_color, "No application found");
-                });
-            } else if !self.py_files.is_empty() {
-                let prev_selected_py = self.selected_py;
-                let current_py_label = match self.selected_py {
-                    Some(i) => self.py_files[i].as_str(),
-                    None => "Select a notebook...",
-                };
-                ui.horizontal(|ui| {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(label_width, ui.spacing().interact_size.y),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| { ui.strong("Notebook"); },
-                    );
-                    egui::ComboBox::from_id_salt("py_combo")
-                        .selected_text(current_py_label)
-                        .width(field_width)
-                        .show_ui(ui, |ui| {
-                            for (i, file) in self.py_files.iter().enumerate() {
-                                ui.selectable_value(&mut self.selected_py, Some(i), file);
-                            }
-                        });
-                });
-
-                if self.selected_py != prev_selected_py {
-                    self.refresh_description();
-                }
-
-                if self.selected_py.is_some() {
-                    // Description box
-                    if let Some(desc) = &self.description {
-                        ui.add_space(5.0);
-                        let (container_fill, container_border) = container_colors(ui.visuals());
-                        egui::Frame::new()
-                            .fill(container_fill)
-                            .stroke(egui::Stroke::new(1.0, container_border))
-                            .corner_radius(6.0)
-                            .inner_margin(12.0)
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.label(desc);
-                            });
+                    if self.selected != prev_selected {
+                        self.refresh_py_files();
+                        self.description = None;
                     }
-                }
-            }
+
+                    // Notebook selector or "no application" message
+                    if self.selected.is_some() && self.py_files.is_empty() {
+                        ui.add_space(5.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(label_width + 8.0);
+                            ui.colored_label(ui.visuals().warn_fg_color, "No application found");
+                        });
+                    } else if !self.py_files.is_empty() {
+                        let prev_selected_py = self.selected_py;
+                        let current_py_label = match self.selected_py {
+                            Some(i) => self.py_files[i].as_str(),
+                            None => "Select a notebook...",
+                        };
+                        ui.horizontal(|ui| {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(label_width, ui.spacing().interact_size.y),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| { ui.strong("Notebook"); },
+                            );
+                            egui::ComboBox::from_id_salt("py_combo")
+                                .selected_text(current_py_label)
+                                .width(field_width)
+                                .show_ui(ui, |ui| {
+                                    for (i, file) in self.py_files.iter().enumerate() {
+                                        ui.selectable_value(&mut self.selected_py, Some(i), file);
+                                    }
+                                });
+                        });
+
+                        if self.selected_py != prev_selected_py {
+                            self.refresh_description();
+                        }
+
+                        if self.selected_py.is_some() {
+                            // Description box
+                            if let Some(desc) = &self.description {
+                                ui.add_space(5.0);
+                                let (container_fill, container_border) = container_colors(ui.visuals());
+                                egui::Frame::new()
+                                    .fill(container_fill)
+                                    .stroke(egui::Stroke::new(1.0, container_border))
+                                    .corner_radius(6.0)
+                                    .inner_margin(12.0)
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(desc);
+                                    });
+                            }
+                        }
+                    }
+                });
         });
     }
 }

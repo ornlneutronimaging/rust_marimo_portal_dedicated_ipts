@@ -27,6 +27,69 @@ fn open_permissions_recursive(path: &Path) {
 
 /// Check if the current user has read+execute access to a directory
 /// using the POSIX access() syscall, which respects groups and ACLs.
+/// Instant "where is my Firefox running" check: Firefox writes a `lock`
+/// symlink inside each profile pointing to "ip:+pid" of the owning process.
+/// The profile lives on shared NFS/GPFS storage, so a Firefox running on
+/// ANY analysis machine locks it and the one marimo spawns here cannot
+/// open; the symlink names that machine directly. Returns a report for the
+/// pop-up window, or None when no remote lock is held (a lock held by this
+/// machine is harmless: firefox just opens a new tab).
+fn firefox_remote_lock_report() -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let profiles = Path::new(&home).join(".mozilla/firefox");
+    let local_ips: Vec<String> = Command::new("hostname")
+        .arg("-I")
+        .output()
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut blocks = Vec::new();
+    for entry in fs::read_dir(&profiles).ok()?.flatten() {
+        let Ok(target) = fs::read_link(entry.path().join("lock")) else {
+            continue;
+        };
+        let target = target.to_string_lossy().into_owned();
+        let Some((ip, pid)) = target.split_once(":+") else {
+            continue;
+        };
+        if ip.starts_with("127.") || local_ips.iter().any(|l| l == ip) {
+            continue;
+        }
+        let host = Command::new("getent")
+            .args(["hosts", ip])
+            .output()
+            .ok()
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .split_whitespace()
+                    .nth(1)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| ip.to_owned());
+        blocks.push(format!(
+            "[{host}] ({ip}) firefox PID {pid} holds the profile lock\n    \
+             (profile {})\n    to close it from here:  ssh {host}  then  kill {pid}",
+            entry.file_name().to_string_lossy(),
+        ));
+    }
+    if blocks.is_empty() {
+        None
+    } else {
+        blocks.push(
+            "If Firefox is NOT actually running there, the lock is stale:\n    \
+             delete the 'lock' and '.parentlock' files in that profile folder\n    \
+             under ~/.mozilla/firefox/."
+                .to_owned(),
+        );
+        Some(blocks.join("\n\n"))
+    }
+}
+
 fn has_read_access(path: &Path) -> bool {
     if let Some(path_str) = path.to_str() {
         if let Ok(c_path) = CString::new(path_str) {
@@ -89,6 +152,10 @@ struct MyApp {
     description: Option<String>,
     launch_time: Option<Instant>,
     launch_error: Option<String>,
+    /// Report of a Firefox session on another machine holding the shared
+    /// profile lock, shown in a pop-up window at launch time.
+    lock_report: Option<String>,
+    lock_window_open: bool,
 }
 
 impl MyApp {
@@ -116,6 +183,8 @@ impl MyApp {
             description: None,
             launch_time: None,
             launch_error: None,
+            lock_report: None,
+            lock_window_open: false,
         }
     }
 
@@ -173,6 +242,51 @@ impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Theme and style are installed once at startup (see `main`).
 
+        // ---------------------- browser-running-elsewhere report window ----
+        if self.lock_window_open {
+            let mut open = true;
+            egui::Window::new("Browser already running elsewhere")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .default_size([680.0, 380.0])
+                .show(ctx, |ui| {
+                    ui.label(
+                        egui::RichText::new(
+                            "Firefox cannot open the notebook on this machine: \
+                             your browser profile is on shared storage and is \
+                             locked by a session on the machine(s) listed below.",
+                        )
+                        .size(16.0),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Log into that machine and close Firefox there (or \
+                             kill it as shown below), then launch again.",
+                        )
+                        .size(16.0),
+                    );
+                    ui.add_space(8.0);
+                    ui.separator();
+                    egui::ScrollArea::both()
+                        .id_salt("firefox_lock_scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(
+                                    self.lock_report.as_deref().unwrap_or(""),
+                                )
+                                .monospace()
+                                .size(15.0),
+                            );
+                        });
+                });
+            if !open {
+                self.lock_window_open = false;
+            }
+        }
+
         if self.selected_py.is_some() {
             egui::TopBottomPanel::bottom("bottom_panel")
                 .frame(
@@ -221,6 +335,17 @@ impl eframe::App for MyApp {
                                         Ok(_) => {
                                             self.launch_error = None;
                                             self.launch_time = Some(Instant::now());
+                                            // Warn NOW when the shared profile
+                                            // is locked by another machine: the
+                                            // firefox marimo spawns will only
+                                            // sit on its own "already running"
+                                            // dialog.
+                                            if let Some(report) =
+                                                firefox_remote_lock_report()
+                                            {
+                                                self.lock_report = Some(report);
+                                                self.lock_window_open = true;
+                                            }
                                         }
                                         Err(e) => {
                                             self.launch_error = Some(format!(

@@ -166,7 +166,14 @@ impl MyApp {
                 let path = entry.path();
                 if path.is_dir() {
                     if let Some(name) = entry.file_name().to_str() {
-                        if name.starts_with("IPTS-") && has_read_access(&path) {
+                        // Only the IPTS the user can actually reach: the
+                        // notebooks live in shared/notebooks, so an IPTS
+                        // whose shared/notebooks is not readable is left
+                        // out of the list entirely.
+                        if name.starts_with("IPTS-")
+                            && has_read_access(&path)
+                            && has_read_access(&path.join("shared").join("notebooks"))
+                        {
                             folders.push(name.to_string());
                         }
                     }
